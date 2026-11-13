@@ -28,6 +28,12 @@ public class TaricAutoImport {
     @Value("${taric.measures.export-file}")
     private String exportFile;
 
+    @Value("${taric.geography.composition-file}")
+    private String geographyFile;
+
+    @Value("${taric.geography.exclusions-file}")
+    private String exclusionsFile;
+
     public TaricAutoImport(
             GoodsImportService goodsService,
             MeasuresImportService measuresService) {
@@ -45,7 +51,9 @@ public class TaricAutoImport {
 
         boolean measuresImported = measuresService.importFiles(
                 Path.of(importFile),
-                Path.of(exportFile)
+                Path.of(exportFile),
+                Path.of(geographyFile),
+                Path.of(exclusionsFile)
         );
 
         System.out.println("Goods imported: " + goodsImported);

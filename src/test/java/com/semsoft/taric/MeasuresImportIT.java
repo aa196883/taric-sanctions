@@ -46,14 +46,26 @@ class MeasuresImportIT {
 
         Path directory = Path.of("resources/taric/full");
 
+        long goodsStart = System.nanoTime();
         goodsService.importFile(
                 directory.resolve("Nomenclature EN.xlsx")
         );
 
+        System.out.printf("PROFILE goods import: %.3f s%n", (System.nanoTime() - goodsStart) / 1e9);
         Path imports = directory.resolve("Duties Import 01-99.xlsx");
         Path exports = directory.resolve("Duties Export 01-99.xlsx");
 
-        assertTrue(measuresService.importFiles(imports, exports));
+        Path geography = directory.resolve(
+                "Geographical areas composition.xlsx"
+        );
+
+        Path exclusions = directory.resolve(
+                "Measure exclusions.xlsx"
+        );
+
+        assertTrue(measuresService.importFiles(
+                imports, exports, geography, exclusions
+        ));
 
         Integer count = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM measures",
@@ -68,7 +80,7 @@ class MeasuresImportIT {
                 Integer.class
         );
 
-        assertEquals(count, countries);
+        assertTrue(countries > count);
 
         // Common Military List classification
         Integer military = jdbc.queryForObject(
@@ -91,7 +103,7 @@ class MeasuresImportIT {
         assertEquals(2, directions);
 
         // Second import is skipped
-        assertFalse(measuresService.importFiles(imports, exports));
+        assertFalse(measuresService.importFiles(imports, exports, geography, exclusions));
 
         Integer countAfter = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM measures",
@@ -99,5 +111,53 @@ class MeasuresImportIT {
         );
 
         assertEquals(count, countAfter);
+
+        Long measureId = jdbc.queryForObject(
+                """
+                SELECT id
+                FROM measures
+                WHERE goods_code = '0100000000'
+                AND direction = 'import'
+                AND measure_type_code = '750'
+                AND legal_reference = 'Regulation 2306/21'
+                """,
+                Long.class
+        );
+
+        Integer france = jdbc.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM measure_countries
+                WHERE measure_id = ?
+                AND country_code = 'FR'
+                """,
+                Integer.class,
+                measureId
+        );
+
+        Integer iceland = jdbc.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM measure_countries
+                WHERE measure_id = ?
+                AND country_code = 'IS'
+                """,
+                Integer.class,
+                measureId
+        );
+
+        assertEquals(1, france);
+        assertEquals(0, iceland);
+
+        Integer dualUse = jdbc.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM measure_categories
+                WHERE category = 'dual_use'
+                """,
+                Integer.class
+        );
+
+        assertTrue(dualUse > 0);
     }
 }
