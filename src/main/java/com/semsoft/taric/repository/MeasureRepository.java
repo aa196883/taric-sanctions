@@ -31,7 +31,8 @@ public class MeasureRepository {
                     id,
                     goodsCode,
                     field(name("m", "direction"), String.class),
-                    field(name("m", "action"), String.class),
+                    field(name("m", "measure_type_code"), String.class),
+                    field(name("m", "measure_type"), String.class),
                     field(name("m", "legal_reference"), String.class),
                     field(name("m", "legal_url"), String.class)
                 )
@@ -47,6 +48,7 @@ public class MeasureRepository {
                         r.value4(),
                         r.value5(),
                         r.value6(),
+                        r.value7(),
                         getCountries(r.value1()),
                         getCategories(r.value1()),
                         getFootnotes(r.value1())

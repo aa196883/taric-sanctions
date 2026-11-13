@@ -16,7 +16,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@SpringBootTest(properties = "taric.goods.auto-import=false")
+@SpringBootTest(properties = "taric.auto-import=false")
 @Testcontainers
 class GoodsImportIT {
 
@@ -40,7 +40,7 @@ class GoodsImportIT {
     @Test
     void importNomenclature() throws Exception {
 
-        Path file = Path.of("ressources/taric/full/Nomenclature EN.xlsx");
+        Path file = Path.of("resources/taric/full/Nomenclature EN.xlsx");
 
         // First import
         assertTrue(service.importFile(file));

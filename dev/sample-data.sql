@@ -5,17 +5,23 @@ INSERT INTO goods (code, description) VALUES
 ('2844100000', 'Radioactive materials');
 
 -- Measures
-INSERT INTO measures
-    (id, goods_code, direction, action, legal_reference, legal_url)
+INSERT INTO measures (
+    id,
+    goods_code,
+    direction,
+    measure_type_code,
+    measure_type,
+    legal_reference
+)
 VALUES
-    (9001, '2914110000', 'export', 'authorization',
-     'Regulation 0111/05', NULL),
-
-    (9002, '2914111000', 'export', 'authorization',
-     'Regulation 0111/05', NULL),
-
-    (9003, '2844100000', 'export', 'authorization',
-     'Example Dual-Use Regulation', NULL);
+    (
+        9001,
+        '2914110000',
+        'export',
+        '478',
+        'Export authorization (Dual use)',
+        'Regulation 0111/05'
+    );
 
 -- Countries
 INSERT INTO measure_countries (measure_id, country_code) VALUES
