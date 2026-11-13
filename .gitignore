@@ -17,3 +17,4 @@ target/
 .env.local
 
 src/main/resources/taric/
+resources/taric/
