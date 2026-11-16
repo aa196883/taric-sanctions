@@ -46,26 +46,18 @@ class MeasuresImportIT {
 
         Path directory = Path.of("resources/taric/full");
 
-        long goodsStart = System.nanoTime();
-        goodsService.importFile(
+        assertTrue(goodsService.importFile(
                 directory.resolve("Nomenclature EN.xlsx")
-        );
+        ));
 
-        System.out.printf("PROFILE goods import: %.3f s%n", (System.nanoTime() - goodsStart) / 1e9);
         Path imports = directory.resolve("Duties Import 01-99.xlsx");
         Path exports = directory.resolve("Duties Export 01-99.xlsx");
+        Path geography = directory.resolve("Geographical areas composition.xlsx");
+        Path exclusions = directory.resolve("Measure exclusions.xlsx");
+        Path descriptions = directory.resolve("Footnotes descriptions.xlsx");
+        Path associations = directory.resolve("Measure footnotes.xlsx");
 
-        Path geography = directory.resolve(
-                "Geographical areas composition.xlsx"
-        );
-
-        Path exclusions = directory.resolve(
-                "Measure exclusions.xlsx"
-        );
-
-        assertTrue(measuresService.importFiles(
-                imports, exports, geography, exclusions
-        ));
+        assertTrue(measuresService.importFiles(imports, exports, geography, exclusions, descriptions, associations));
 
         Integer count = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM measures",
@@ -103,7 +95,14 @@ class MeasuresImportIT {
         assertEquals(2, directions);
 
         // Second import is skipped
-        assertFalse(measuresService.importFiles(imports, exports, geography, exclusions));
+        assertFalse(measuresService.importFiles(
+        imports,
+        exports,
+        geography,
+        exclusions,
+        descriptions,
+        associations
+));
 
         Integer countAfter = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM measures",
@@ -159,5 +158,32 @@ class MeasuresImportIT {
         );
 
         assertTrue(dualUse > 0);
+
+        Integer footnotes = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM footnotes",
+                Integer.class
+        );
+
+        assertEquals(2678, footnotes);
+
+        Integer associationsCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM measure_footnotes",
+                Integer.class
+        );
+
+        assertTrue(associationsCount > 0);
+
+        Integer matched = jdbc.queryForObject(
+                """
+                SELECT COUNT(*)
+                FROM measures m
+                JOIN measure_footnotes mf ON mf.measure_id = m.id
+                WHERE LEFT(m.goods_code, 6) = '291411'
+                AND mf.footnote_code = 'CD259'
+                """,
+                Integer.class
+        );
+
+        assertTrue(matched > 0);
     }
 }

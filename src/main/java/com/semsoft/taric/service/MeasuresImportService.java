@@ -8,12 +8,14 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -31,9 +33,14 @@ public class MeasuresImportService {
     );
 
     private final JdbcTemplate jdbc;
+    private final FootnotesImportService footnotesService;
 
-    public MeasuresImportService(JdbcTemplate jdbc) {
+    public MeasuresImportService(
+            JdbcTemplate jdbc,
+            FootnotesImportService footnotesService
+    ) {
         this.jdbc = jdbc;
+        this.footnotesService = footnotesService;
     }
 
     private record Measure(
@@ -53,16 +60,29 @@ public class MeasuresImportService {
             Path importFile,
             Path exportFile,
             Path geographyFile,
-            Path exclusionsFile
+            Path exclusionsFile,
+            Path footnotesDescriptionsFile,
+            Path footnotesAssociationsFile
     ) throws IOException {
 
-        Integer count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM measures",
-                Integer.class
+        Boolean alreadyImported = jdbc.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM measures)",
+                Boolean.class
         );
 
-        if (count != null && count > 0) {
+        if (Boolean.TRUE.equals(alreadyImported)) {
             return false;
+        }
+
+        Boolean existingFootnotes = jdbc.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM footnotes)",
+                Boolean.class
+        );
+
+        if (Boolean.TRUE.equals(existingFootnotes)) {
+        throw new IllegalStateException(
+                "Footnotes already exist while measures are empty"
+        );
         }
 
         Set<String> goods = new HashSet<>(
@@ -73,28 +93,29 @@ public class MeasuresImportService {
             throw new IllegalStateException("Goods table is empty");
         }
 
-        long phaseStart = System.nanoTime();
         GeographyResolver geography = new GeographyResolver(geographyFile);
-        System.out.printf("PROFILE geography: %.3f s%n", (System.nanoTime() - phaseStart) / 1e9);
-        phaseStart = System.nanoTime();
         MeasureExclusions exclusions = new MeasureExclusions(exclusionsFile);
 
-        System.out.printf("PROFILE exclusions: %.3f s%n", (System.nanoTime() - phaseStart) / 1e9);
+        // Temporary correspondence between TARIC keys and database IDs.
+        Map<MeasureKey, List<Long>> measureIds = new HashMap<>();
+
         long nextId = 1;
 
         nextId = readFile(
-                importFile, "import", goods, geography, exclusions, nextId
+                importFile, "import", goods, geography,
+                exclusions, measureIds, nextId
         );
 
         nextId = readFile(
-                exportFile, "export", goods, geography, exclusions, nextId
+                exportFile, "export", goods, geography,
+                exclusions, measureIds, nextId
         );
 
         if (nextId == 1) {
             throw new IllegalStateException("No measures imported");
         }
 
-        // Synchronize identity sequence after explicit IDs.
+        // Explicit IDs were used: synchronize PostgreSQL sequence.
         jdbc.queryForObject(
                 """
                 SELECT setval(
@@ -106,12 +127,21 @@ public class MeasuresImportService {
                 Long.class
         );
 
-        System.out.println("=== TARIC IMPORT COMPLETED ===");
+        // Import footnotes while the source-to-database mapping is available.
+        footnotesService.importFiles(
+                footnotesDescriptionsFile,
+                footnotesAssociationsFile,
+                measureIds
+        );
+
+        System.out.println("=== TARIC MEASURES IMPORT COMPLETED ===");
 
         for (String table : List.of(
                 "measures",
                 "measure_countries",
-                "measure_categories"
+                "measure_categories",
+                "footnotes",
+                "measure_footnotes"
         )) {
             Long total = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM " + table,
@@ -130,11 +160,10 @@ public class MeasuresImportService {
             Set<String> goods,
             GeographyResolver geography,
             MeasureExclusions exclusions,
+            Map<MeasureKey, List<Long>> measureIds,
             long nextId
     ) throws IOException {
 
-        long fileStart = System.nanoTime();
-        long[] dbNanos = new long[3];
         DataFormatter formatter = new DataFormatter();
         List<Measure> batch = new ArrayList<>();
 
@@ -146,15 +175,12 @@ public class MeasuresImportService {
         try (var input = Files.newInputStream(file);
              var workbook = new XSSFWorkbook(input)) {
 
-            System.out.printf("PROFILE %s workbook load: %.3f s%n", direction, (System.nanoTime() - fileStart) / 1e9);
             var sheet = workbook.getSheetAt(0);
 
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
 
-                var row = sheet.getRow(i);
-                if (row == null) {
-                    continue;
-                }
+                Row row = sheet.getRow(i);
+                if (row == null) continue;
 
                 total++;
 
@@ -188,12 +214,11 @@ public class MeasuresImportService {
                         typeCode
                 );
 
-                // Resolve geographical group or direct country.
+                // Resolve geography and apply source exclusions.
                 Set<String> countries = new HashSet<>(
                         geography.resolve(geographicalCode)
                 );
 
-                // Apply exclusions specific to this source measure.
                 countries.removeAll(
                         exclusions.getExcludedCountries(key)
                 );
@@ -203,8 +228,10 @@ public class MeasuresImportService {
                     continue;
                 }
 
+                long id = nextId++;
+
                 batch.add(new Measure(
-                        nextId++,
+                        id,
                         goodsCode,
                         direction,
                         typeCode,
@@ -213,17 +240,21 @@ public class MeasuresImportService {
                         countries
                 ));
 
+                // Keep the TARIC signature only during ingestion.
+                measureIds.computeIfAbsent(key, k -> new ArrayList<>())
+                          .add(id);
+
                 imported++;
 
                 if (batch.size() == 250) {
-                    insertBatch(batch, dbNanos);
+                    insertBatch(batch);
                     batch.clear();
                 }
             }
         }
 
         if (!batch.isEmpty()) {
-            insertBatch(batch, dbNanos);
+            insertBatch(batch);
         }
 
         System.out.println("=== " + direction.toUpperCase() + " ===");
@@ -232,21 +263,15 @@ public class MeasuresImportService {
         System.out.println("Unknown goods skipped: " + skippedGoods);
         System.out.println("Empty geographies: " + emptyGeographies);
 
-        System.out.printf("PROFILE %s total: %.3f s; SQL measures: %.3f s; countries: %.3f s; categories: %.3f s%n", direction, (System.nanoTime() - fileStart) / 1e9, dbNanos[0] / 1e9, dbNanos[1] / 1e9, dbNanos[2] / 1e9);
         return nextId;
     }
 
-    private static String cell(
-            org.apache.poi.ss.usermodel.Row row,
-            int column,
-            DataFormatter formatter
-    ) {
+    private static String cell(Row row, int column, DataFormatter formatter) {
         return formatter.formatCellValue(row.getCell(column)).trim();
     }
 
-    private void insertBatch(List<Measure> measures, long[] dbNanos) {
+    private void insertBatch(List<Measure> measures) {
 
-        long sqlStart = System.nanoTime();
         // Measures
         jdbc.batchUpdate(
                 """
@@ -272,8 +297,7 @@ public class MeasuresImportService {
                 }
         );
 
-        dbNanos[0] += System.nanoTime() - sqlStart;
-        // Countries
+        // Country associations
         List<CountryAssociation> countries = new ArrayList<>();
 
         for (Measure m : measures) {
@@ -282,10 +306,11 @@ public class MeasuresImportService {
             }
         }
 
-        sqlStart = System.nanoTime();
         jdbc.batchUpdate(
                 """
-                INSERT INTO measure_countries (measure_id, country_code)
+                INSERT INTO measure_countries (
+                    measure_id, country_code
+                )
                 VALUES (?, ?)
                 """,
                 countries,
@@ -296,20 +321,16 @@ public class MeasuresImportService {
                 }
         );
 
-        dbNanos[1] += System.nanoTime() - sqlStart;
-        // Categories
+        // Categories derived directly from TARIC measure types.
         List<Measure> categorized = measures.stream()
                 .filter(m -> TYPE_CATEGORIES.containsKey(m.typeCode()))
                 .toList();
 
-        sqlStart = System.nanoTime();
         if (!categorized.isEmpty()) {
             jdbc.batchUpdate(
                     """
                     INSERT INTO measure_categories (
-                        measure_id,
-                        category,
-                        source
+                        measure_id, category, source
                     )
                     VALUES (?, ?, 'measure_type')
                     """,
@@ -317,12 +338,9 @@ public class MeasuresImportService {
                     250,
                     (ps, m) -> {
                         ps.setLong(1, m.id());
-                        ps.setString(
-                                2, TYPE_CATEGORIES.get(m.typeCode())
-                        );
+                        ps.setString(2, TYPE_CATEGORIES.get(m.typeCode()));
                     }
             );
         }
-        dbNanos[2] += System.nanoTime() - sqlStart;
     }
 }

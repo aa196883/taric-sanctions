@@ -34,10 +34,16 @@ public class TaricAutoImport {
     @Value("${taric.geography.exclusions-file}")
     private String exclusionsFile;
 
+    @Value("${taric.footnotes.descriptions-file}")
+    private String footnotesDescriptionsFile;
+
+    @Value("${taric.footnotes.associations-file}")
+    private String footnotesAssociationsFile;
+
     public TaricAutoImport(
             GoodsImportService goodsService,
-            MeasuresImportService measuresService) {
-
+            MeasuresImportService measuresService
+    ) {
         this.goodsService = goodsService;
         this.measuresService = measuresService;
     }
@@ -53,10 +59,12 @@ public class TaricAutoImport {
                 Path.of(importFile),
                 Path.of(exportFile),
                 Path.of(geographyFile),
-                Path.of(exclusionsFile)
+                Path.of(exclusionsFile),
+                Path.of(footnotesDescriptionsFile),
+                Path.of(footnotesAssociationsFile)
         );
 
         System.out.println("Goods imported: " + goodsImported);
-        System.out.println("Measures imported: " + measuresImported);
+        System.out.println("Measures and footnotes imported: " + measuresImported);
     }
 }
